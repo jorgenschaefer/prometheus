@@ -1,0 +1,604 @@
+\input texinfo.tex     @c -*-texinfo-*-
+@comment %**start of header
+@setfilename prometheus.info
+@settitle The Prometheus prototype-based object system
+@afourpaper
+@comment %**end of header
+
+@copying
+Copyright @copyright{} Jorgen Sch@"afer
+
+This program is free software; you can redistribute it and/or
+modify it under the terms of the GNU General Public License
+as published by the Free Software Foundation; either version 2
+of the License, or (at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this program; if not, write to the Free Software
+Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA
+02111-1307, USA.
+@end copying
+
+@dircategory The Algorithmic Language Scheme
+@direntry
+* prometheus:: The Prometheus prototype-based object system
+@end direntry
+
+@titlepage
+@title Prometheus
+@subtitle A prototype-based object system for Scheme
+@author Jorgen Sch@"afer
+
+@page
+@vskip 0pt plus 1filll
+@insertcopying
+@end titlepage
+
+@contents
+
+@ifnottex
+@node top, Introduction, (dir), (dir)
+@top Prometheus: A prototype-based object system for Scheme
+
+Prometheus is a prototype-based message-passing object system for Scheme
+similar to the @uref{http://research.sun.com/self/, Self language}.
+
+This manual documents version 2 of Prometheus.
+
+@end ifnottex
+
+@menu
+* Introduction::                
+* Installation::                
+* Prometheus::                  
+* Examples::                    
+* Pitfalls::                    
+* Hermes::                      
+@end menu
+
+
+@node Introduction, Installation, top, top
+@chapter Introduction
+
+Prometheus is a prototype-based message-passing object system for Scheme
+similar to the @uref{http://research.sun.com/self/, Self language}
+
+In a prototype-based object system, an object is just a set of slots. A
+slot has a name and a value, or a @emph{handler procedure} which reacts
+on messages associated with the slot. Some slots are special, so-called
+@emph{parent slots}, whose use will become apparent shortly.
+
+Objects receive messages. A message consists of a symbol called a
+@emph{selector}, and zero or more arguments. When an object receives a
+message, the object searches for a slot whose name is equal (@code{eq?},
+actually) to the message selector. When it finds such a slot, it invokes
+the slot's handler, or returnes the slot's value, as appropriate. When
+the slot is not in the object, all objects in parent slots are queried
+for that slot.
+
+An object is created by @emph{cloning} an existing object. The new
+object is empty except for a single parent slot, which points to the
+cloned object. This way, the new object behaves exactly like the old
+one.
+
+In a prototype-based object system, objects are created and modified
+until they behave as required. Then, that object is cloned to create the
+real objects to work with---it forms the @emph{prototype} for the other
+objects.
+
+This manual documents version 2 of Prometheus. The canonical URL is
+@url{http://www.forcix.cx/software/prometheus.html}.
+
+
+@node Installation, Prometheus, Introduction, top
+@chapter Installation
+
+Prometheus is shipped as a package for @uref{http://www.s48.org/, Scheme
+48}. The structure @code{prometheus} serves as the main user API. To use
+it, issue the following commands at the REPL:
+
+@example
+> ,config ,load .../prometheus/scheme/packages.scm
+> ,open prometheus
+@end example
+
+A simple test would be the following:
+
+@example
+> (define o (*the-root-object* 'clone))
+> (o 'add-value-slot! 'fnord 'set-fnord! 23)
+> (o 'fnord)
+23
+@end example
+
+@noindent
+The package works unmodified with @uref{http://www.scsh.net/, the Scheme
+Shell}. Prometheus is written in R5RS Scheme with a few SRFI
+dependencies documented in @file{packages.scm}, and should be easy to
+port to other implementations of Scheme.
+
+
+@node Prometheus, Examples, Installation, top
+@chapter Prometheus
+
+@menu
+* Objects::                     
+* Slots::                       
+* Inheritance::                 
+* Root Objects::                
+* Syntactic Sugar::             
+* Private Messages::            
+@end menu
+
+
+@node Objects, Slots, Prometheus, Prometheus
+@section Objects
+
+Prometheus objects are implemented as closures. To send a message to
+that object, the closure is applied to the message selector (i.e., the
+slot name), followed by a number of arguments. The return value(s) of
+the message are returned from this application.
+
+
+@node Slots, Inheritance, Objects, Prometheus
+@section Slots
+
+Prometheus knows about three kinds of slots.
+
+@emph{Value slots} merely store a value which is returned when the
+corresponding message is received.
+
+@emph{Parent slots} are just like value slots, but have a special flag
+marking them as parents.
+
+@emph{Method slots} contain a procedure which is invoked for messages
+corresponding to this slot.
+
+The procedure is called with at least two arguments, conventionally
+called @var{self} and @var{resend}. If the message received any
+arguments, they are also passed, after @var{resend}. @var{Self} is the
+object which received the messages, as opposed to the object where this
+message handler was found in. @var{Resend} is a procedure which can be
+used to resend the message to further parents, if the current method
+does not wish to handle the message. @xref{Inheritance}, for more
+information about this.
+
+A typical method handler could thus look like:
+
+@lisp
+(lambda (self resend a b)
+  (/ (+ a b)
+     2))
+@end lisp
+
+Every slot, regardless of its kind, can be associated with a
+@emph{setter method} when it is created. Setter methods receive a single
+argument, and replaces the value of the corresponding slot with this
+argument. Setter methods can be created automatically when a given slot
+is created, and are removed when the corresponding getter slot is
+removed (but not vice-versa). Because of this, they are sometimes not
+considered to be slots, even if they are. @xref{Setters are Methods},
+for an example where this distinction is important.
+
+
+@node Inheritance, Root Objects, Slots, Prometheus
+@section Inheritance
+
+When a slot for a message is not found in the current object, all its
+parent slots are queried recursively, i.e. parent objects which don't
+know the slot query @emph{their} parents, etc.
+
+If no parent knows the slot, the original message receiving object is
+sent a @code{message-not-understood} message. If more than one parent
+knows the slot, the original message receiving object is sent a
+@code{ambiguous-message-send} message. @xref{Root Objects}, for a
+documentation of those messages. By default, they signal an error.
+
+Method slots can decide not to handle the message, but rather search the
+inheritance tree for other handlers. For this purpose, they are passed a
+procedure commonly called @var{resend}. @xref{Slots}, for an explanation
+of method slots.
+
+It is important to understand the difference between sending a message
+to an object, and @emph{re}sending it to the object. When a message is
+just sent to an object, methods will get that object as the @var{self}
+argument. When the method wants information about the object it is
+handling messages for, this is usually not what is intended.
+
+Consider an account object, which inherited from the account prototype.
+All the methods are in the account prototype. When a message to modify
+the account value is sent to the actual account object, the message
+receiver is the account object. It does not handle this message, so it
+resends the message to the parent object, the account prototype. The
+method handler to modify the account value should now know to modify the
+account object, not the prototype. Hence, the @var{self} argument should
+point to the account object, but if the message was just sent directly
+to the prototype, it @var{self} would be the prototype. Hence, resending
+exists. The @var{resend} procedure allows a method to manually request
+such a resending.
+
+
+@deffn Procedure resend @var{whereto} @var{message} @var{args} @dots{}
+
+This procedure will try to find a different handler for the given
+@var{message}. The handler can be searched for further up the
+inheritance tree, or even in a totally different object and its parents.
+
+@var{Whereto} can be one of the following values.
+
+@table @asis
+@item @code{#f}
+Use any parent of the object where this handler was found in.
+
+@item A symbol
+Use the object in the parent slot with this name.
+
+@item Any object
+Search for handlers in that object.
+@end table
+
+
+@var{Resend} is roughly equivalent in concept to CLOS'
+@code{(next-method)}.
+@end deffn
+
+
+@node Root Objects, Syntactic Sugar, Inheritance, Prometheus
+@section Root Objects
+
+Since objects are created by sending a @code{clone} message to other
+objects, there has to be a kind of root object. Prometheus provides a
+procedure to create such root objects.
+
+@deffn Procedure make-prometheus-root-object
+
+This creates a new root object from which other objects can be cloned.
+This object is independent of any other object, and thus creates a new
+inheritance tree.
+@end deffn
+
+@noindent
+Prometheus also provides a single existing root object, created with
+the procedure above. Unless specifically wanted otherwise, using this
+object as the root object ensures that all prometheus objects share a
+common ancestor.
+
+@deffn Variable *the-root-object*
+
+This is the default root object. If not really intended otherwise, this
+should be used as the root of the object hierarchy in a program.
+@end deffn
+
+@noindent
+Root objects contain a number of slots by default.
+
+
+@deffn Message clone
+
+Return a clone of the message recipient. This creates a new object with
+a single slot, @code{parent}, which points to the cloned object
+@end deffn
+
+
+@deffn Message add-value-slot! @var{getter} @var{value}
+@deffnx Message add-value-slot! @var{getter} @var{setter} @var{value}
+
+Add a new value slot to the recipient. The value of the slot can be
+retrieved with the @var{getter} message. If a @var{setter} message is
+given, that message can be used to change the value of the slot.
+@end deffn
+
+
+@deffn Message add-method-slot! @var{getter} @var{proc}
+@deffnx Message add-method-slot! @var{getter} @var{setter} @var{proc}
+
+Add a method to the recipient. Sending the object a @var{getter} message
+now invokes @var{proc} with the same arguments as the message, in
+addition to a @var{self} argument pointing to the current object and a
+@var{resend} procedure available to resend the message if the method
+does not want to handle it directly.
+
+The @var{setter} message can later be used to change the procedure.
+@end deffn
+
+
+@deffn Message add-parent-slot! @var{getter} @var{parent}
+@deffnx Message add-parent-slot! @var{getter} @var{setter} @var{parent}
+
+Add a parent slot to the recipient. Parent slots are searched for slots
+not found directly in the object. The @var{setter} message, if given,
+can be used to later change the value of the parent slot.
+@end deffn
+
+
+@deffn Message delete-slot! @var{name}
+
+Delete the slot named @var{name} from the receiving object. This also
+removes the setter corresponding to @var{name}, if any. Beware that the
+parents might contain the same slot, so a message send can still succeed
+even after a slot is deleted.
+@end deffn
+
+
+@deffn Message immediate-slot-list
+
+This message returns a list of slots in this object. The elements of the
+list are lists with four elements:
+
+@itemize @bullet
+@item
+@var{getter-name}
+
+@item
+@var{setter-name}
+
+@item
+@code{#f}
+
+@item
+@var{type}, which can be one of the symbols @code{value}, @code{method}
+or @code{parent}.
+@end itemize
+@end deffn
+
+@deffn Message message-not-understood @var{message} @var{args}
+
+This is received when the message @var{message} with arguments
+@var{args} to the object was not understood. The root object just
+signals an error.
+@end deffn
+
+
+@deffn Message ambiguous-message-send @var{message} @var{args}
+
+This is received when the message @var{message} with arguments
+@var{args} to the object would have reached multiple parents. The root
+object just signals an error.
+@end deffn
+
+
+@node Syntactic Sugar, Private Messages, Root Objects, Prometheus
+@section Syntactic Sugar
+
+Prometheus provides two forms of syntactic sugar for common operations
+on objects.
+
+A very common operation is to add method slots to an object, which
+usually looks like this:
+
+@lisp
+(obj 'add-method-slot!
+     'average
+     (lambda (self resend a b)
+       (/ (+ a b)
+          2)))
+@end lisp
+
+@noindent
+Using the special form of @code{define-method}, this can be shortened
+to:
+
+@lisp
+(define-method (obj 'average self resend a b)
+  (/ (+ a b)
+     2))
+@end lisp
+
+@deffn Syntax define-method (@var{obj} @var{'message} @var{self} @var{resend} . @var{args}) @var{body} @dots{}
+
+This is syntactic sugar for the often-used idiom to define a method
+slot, by sending a @code{add-method-slot!} message with a @var{message}
+name and a lambda form with @var{self}, @var{resend} and @var{args}
+formals, and a @var{body}.
+@end deffn
+
+@noindent
+Another common operation is to clone an object, and add a number of
+value and method slots:
+
+@lisp
+(define o (*the-root-object* 'clone))
+(o 'add-value-slot! 'constant 'set-constant! 5)
+(o 'add-method-slot! 'add
+   (lambda (self resend summand)
+     (+ summand (self 'constant))))
+@end lisp
+
+@noindent
+This can be more succintly written as:
+
+@lisp
+(define-object o (*the-root-object*)
+  (constant set-constant! 5)
+  ((add self resend summand)
+   (+ summand (self 'constant)))
+@end lisp
+
+@deffn Syntax define-object @var{name} (@var{parent} @var{other-parents} @dots{}) @var{slots} @dots{}
+
+This is syntactic sugar for the typical actions of cloning an object
+from a @var{parent} object, and adding more slots.
+
+@var{other-parents} is a list of @code{(name object)} lists, where each
+@var{object} is added as a parent slot named @var{name}.
+
+@var{slots} is a list of slot specifications, either @code{(getter
+value)} or @code{(getter setter value)} for value slots, or @code{((name
+self resend args @dots{}) body @dots{})} for method slots.
+@end deffn
+
+
+@node Private Messages,  , Syntactic Sugar, Prometheus
+@section Private Messages
+
+Message names in Prometheus don't have any required type. They are only
+compared using @code{eq?}. Because of this, any kind of Scheme object
+can be used as a message name. This means that it is possible to use a
+private Scheme value---for example, a freshly-allocated list---as a slot
+name. This can be used to keep slot names private, since it is not
+possible to create an object which is @code{eq?} to such an object
+except by receiving a reference to that object.
+
+
+@node Examples, Pitfalls, Prometheus, top
+@chapter Examples
+
+@menu
+* Simple Account Object::       
+* Creating Slots on Use::       
+* Diamond Inheritance::         
+@end menu
+
+
+@node Simple Account Object, Creating Slots on Use, Examples, Examples
+@section Simple Account Object
+
+This is from the file @file{examples/account.scm} in the Prometheus
+distribution:
+
+@verbatiminclude examples/account.scm
+
+
+@node Creating Slots on Use, Diamond Inheritance, Simple Account Object, Examples
+@section Creating Slots on Use
+
+This is from the file @file{examples/create-on-use.scm} in the
+Prometheus distribution:
+
+@verbatiminclude examples/create-on-use.scm
+
+
+@node Diamond Inheritance,  , Creating Slots on Use, Examples
+@section Diamond Inheritance
+
+This is from the file @file{examples/diamond.scm} in the Prometheus
+distribution:
+
+@verbatiminclude examples/diamond.scm
+
+
+@node Pitfalls, Hermes, Examples, top
+@chapter Pitfalls
+
+@menu
+* Setters are Methods::         
+@end menu
+
+
+@node Setters are Methods,  , Pitfalls, Pitfalls
+@section Setters are Methods
+
+Since Prometheus does not allow for ambiguous message sends, and setter
+methods are just messages, this can lead to a confusing situation.
+Consider the following code:
+
+@lisp
+(define o1 (*the-root-object* 'clone))
+(o1 'add-value-slot! 'foo 'set-foo! 1)
+(define o2 (o1 'clone))
+(define o3 (o2 'clone))
+(o3 'add-parent-slot! 'parent2 o1)
+@end lisp
+
+@noindent
+This creates a diamond-shaped inheritance tree. Now it is possible to
+send a @code{set-foo!} message to @code{o3}, though it inherits this
+slot from two parents, the slot is ultimately inherited from the same
+object. But now witness the following:
+
+@lisp
+> (o3 'foo)
+@result{} 3
+> (o2 'set-foo! 2)
+> (o3 'set-foo! 3)
+@error{} Ambiguous message send
+@end lisp
+
+@noindent
+What happened here? The @code{set-foo!} message added the @code{foo}
+slot to @code{o2}, but with it, also the associated method to mutate
+that slot, @code{set-foo!}. So, sending @code{set-foo!} to @code{o3}
+will find the same message both in @code{o1} and @code{o2}, and cause an
+ambiguous message send.
+
+Conclusion: Be extra careful with multiple inheritance.
+
+
+@node Hermes,  , Pitfalls, top
+@appendix Hermes
+
+Hermes is a very small object system based solely on messages. It's the
+basis upon which Prometheus is built. It should be considered internal
+information of Prometheus, but someone might find it useful, and it is
+visible in every Prometheus object.
+
+A Hermes object contains messages. A message has a name, a procedure to
+handle this message, and a type flag on whether the return value of this
+message should be treated as a parent object. A message-handling
+procedure is applied to the arguments of the message in addition to two
+arguments, probably known from Prometheus' method slots by now:
+@var{Self} and @var{resend}. Indeed, Prometheus' method slots are just a
+very thing wrapper around Hermes messages.
+
+The @code{hermes} structure exports a single procedure.
+
+@deffn Procedure make-hermes-object
+
+Return a new Hermes object which knows the basic messages.
+@end deffn
+
+@noindent
+The basic messages known by all Hermes objects are as follows.
+
+@deffn Message add-message! @var{name} @var{handler} [@var{parent?}]
+
+This adds a message named @var{name} to the object, upon receiving
+which, @var{handler} is applied to @var{self}, @var{resend}, and the
+arguments to the message. If @var{parent?} is supplied and not false,
+this message returns a parent object. In this case, it must be callable
+with no arguments, and must not use @var{resend}.
+@end deffn
+
+@deffn Message delete-message! @var{name}
+
+Remove the handler for the message named @var{name}. This causes such
+messages to be handled by parent objects in the future again.
+@end deffn
+
+@deffn Message %get-handler @var{name} @var{receiver} @var{args} @var{visited}
+
+The message upon which inheritance in Hermes is built. This returns a
+procedure of no arguments which handles the receiving of the message.
+This is delayed so that Hermes can check for duplicate handlers, which
+would be an error.
+
+@var{Name} is the name of the message we are looking for. @var{Receiver}
+is the original receiver of the message, to be used as the @var{self}
+argument to the handler procedure. @var{Args} is a list of arguments.
+@var{Visited} is a list of objects we have seen so far. This is used to
+detect cycles in the inheritance graph.
+
+This message returns two values. The first one is the handler and the
+other one the object in which this handler was found. The handler value
+can also be one of two symbols to signify an error condition. If it's
+the symbol @code{message-not-understood}, then neither this object nor
+any parents knew how to handle this message. If it's
+@code{ambiguous-message-send}, the same message could be handled by
+multiple parents in the inheritance graph. The user needs to add a
+message which resends the ambiguous message unambiguously to the correct
+parent. In either case, the second return value is @code{#f}. The
+handler procedure itself accepts no arguments, and just runs the
+message.
+@end deffn
+
+@noindent
+It is absolutely sufficient for an object to handle only the
+@code{%get-handler} message to participate in the inheritance handling
+of Hermes.
+
+@bye

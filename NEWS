@@ -1,0 +1,16 @@
+Version 2 (2006-06-04): Complete rewrite
+
+  After the insight that simple security is impossible, Prometheus
+  was rewritten from scratch ontop of a much cleaner and simpler
+  basis.
+
+  The only User-visible difference is that the SLOTS->LIST message got
+  replaced by IMMEDIATE-SLOT-LIST. This message returns a list of
+  immediate slots in the receiving object. Each element has three
+  elements: The name of the getter, the name of the setter (or #f),
+  and the type, where the type is one of 'VALUE, 'METHOD or 'PARENT.
+
+
+Version 1 (2005-08-09): Initial release
+
+  The initial release of the system to the public: Prometheus rising.

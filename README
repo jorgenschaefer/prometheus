@@ -1,0 +1,40 @@
+* Overview                                         -*- outline -*-
+
+Prometheus is a prototype-based message-passing object system. This
+means that there are no classes, but instead, objects are created and
+modified on the fly until they match the specified behavior. Then,
+these objects can be "cloned" into a new object which inherits the
+whole behavior of the parent objects. An object in this world is just
+a set of named slots which can be accessed or run by sending a message
+to the object.
+
+In Prometheus, objects are closures that receive as the first argument
+a message selector, and arguments to the message as remaining
+arguments. See the Prometheus manual for further information.
+
+The canonical URL for Prometheus is
+http://www.forcix.cx/software/prometheus.html
+
+
+* Quickstart
+
+In Scheme48, do:
+
+> ,config ,load .../prometheus/scheme/packages.scm
+> ,open prometheus
+> (define my-object (*the-root-object* 'clone))
+> (my-object 'add-value-slot! 'fnord 'set-fnord! 23)
+> (my-object 'fnord)
+23
+
+
+* Bugs and limitations
+
+No bugs known to me, but look at the Pitfalls section in the
+Prometheus manual: (info "(prometheus)Pitfalls")
+
+This object system does not intend to integrate with the rest of
+Scheme. It's only a tool to describe a problem domain.
+
+This project abuses too many names from Greek mythology. The author
+apologizes profusely for this.
